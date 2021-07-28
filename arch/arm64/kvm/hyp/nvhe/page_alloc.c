@@ -53,6 +53,9 @@ struct page_groups {
 
 struct page_groups page_groups_a;
 
+
+static bool during_initialization;
+
 // USED pages should be continuously assigned
 // Check whether phys is in between the used pages
 bool in_used_pages(phys_addr_t phys, struct hyp_pool *pool)
@@ -255,12 +258,15 @@ bool check_page_group_start(phys_addr_t phys, struct hyp_page *p, struct hyp_poo
   }
 
   // Page should not be used at all
+  if (!during_initialization) {
+    return ret;
+  }
+
   if ((p->refcount != 0) || in_used_pages(phys,pool)) {
     ret=false;
     hyp_putsxn("phys",(u64)phys,64);
     check_assert_fail("found non-empty list in refcount!=0 or used_pages start page");
   }
-
   if (find_free_buddy(pool, p, p->order) != NULL) {
     ret=false;
     hyp_putsxn("phys",(u64)phys,64);
@@ -673,8 +679,11 @@ int hyp_pool_init(struct hyp_pool *pool, u64 pfn, unsigned int nr_pages,
 	for (i = reserved_pages; i < nr_pages; i++)
 		__hyp_put_page(pool, &p[i]);
 
+
         // PS : add invariant check
+        during_initialization = true;
         check_alloc_invariant(pool);
+        during_initialization = false;
 
 	return 0;
 }
