@@ -20,6 +20,11 @@ struct hyp_pool {
 	phys_addr_t range_start;
 	phys_addr_t range_end;
 	unsigned short max_order;
+
+        // XXX (JK) : we need the way to distinguish 
+        // it from original codes 
+        // PS HACK : add this to help state the invariant
+        unsigned int used_pages; 
 };
 
 /* Allocation */
@@ -29,5 +34,11 @@ void hyp_put_page(struct hyp_pool *pool, void *addr);
 
 /* Used pages cannot be freed */
 int hyp_pool_init(struct hyp_pool *pool, u64 pfn, unsigned int nr_pages,
-		  unsigned int reserved_pages);
+                  // JK HACK : the following line is replaced to add 
+                  // used_pages as an argument
+                  // used_pages as an argument
+                  // unsigned int reserved_pages)
+                  unsigned int reserved_pages, unsigned used_pages); 
+// int hyp_pool_init(struct hyp_pool *pool, u64 pfn, unsigned int nr_pages,
+// 		  unsigned int reserved_pages);
 #endif /* __KVM_HYP_GFP_H */

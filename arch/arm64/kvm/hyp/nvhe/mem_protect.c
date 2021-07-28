@@ -18,6 +18,11 @@
 #include <nvhe/mem_protect.h>
 #include <nvhe/mm.h>
 
+// JK - debugging
+#include <../debug-pl011.h>
+#include <../check-debug-pl011.h>
+// End of added header files
+
 #define KVM_HOST_S2_FLAGS (KVM_PGTABLE_S2_NOFWB | KVM_PGTABLE_S2_IDMAP)
 
 extern unsigned long hyp_nr_cpus;
@@ -35,11 +40,16 @@ static const u8 pkvm_hyp_id = 1;
 
 static void *host_s2_zalloc_pages_exact(size_t size)
 {
+  // JK: add messages for alloc page operations
+  hyp_putsxn("hyp alloc pages for s2 is called via host_s2_zalloc_pages_exact", 
+             size, 64);
 	return hyp_alloc_pages(&host_s2_pool, get_order(size));
 }
 
 static void *host_s2_zalloc_page(void *pool)
 {
+  // add messages
+  hyp_putsp("hyp alloc pages for s2 is called\n");
 	return hyp_alloc_pages(pool, 0);
 }
 
@@ -60,7 +70,10 @@ static int prepare_s2_pool(void *pgt_pool_base)
 
 	pfn = hyp_virt_to_pfn(pgt_pool_base);
 	nr_pages = host_s2_pgtable_pages();
-	ret = hyp_pool_init(&host_s2_pool, pfn, nr_pages, 0);
+        // JK: replace the following line due to the modified signature of 
+        // hyp_pool_init function
+	// ret = hyp_pool_init(&host_s2_pool, pfn, nr_pages, 0);
+	ret = hyp_pool_init(&host_s2_pool, pfn, nr_pages, 0, 0);
 	if (ret)
 		return ret;
 

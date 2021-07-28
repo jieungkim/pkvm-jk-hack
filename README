@@ -1,3 +1,14 @@
+linux-pkvm-verif
+
+================
+This is a copy of the Android Linux repo <https://android-kvm.googlesource.com/linux> for quick-and-dirty experimentation with pKVM verification.
+Contact Peter Sewell for notes summarising the pKVM code and initialisation sequence, and how to build and run pKVM.
+
+[06.08.2021]
+Jieung starts working on porting old inlined-c specifications into the 
+up-to-date pkvm.
+
+
 Linux kernel
 ============
 

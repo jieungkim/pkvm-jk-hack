@@ -9,6 +9,9 @@
 
 u64 __hyp_vmemmap;
 
+// JK: The main difference is 
+
+
 /*
  * Index the hyp_vmemmap to find a potential buddy page, but make no assumption
  * about its current state.
@@ -218,8 +221,17 @@ void *hyp_alloc_pages(struct hyp_pool *pool, unsigned short order)
 	return hyp_page_to_virt(p);
 }
 
+// PS: initialise the buddy allocator into `pool`, giving it memory phys..phys+nr_pages<<PAGE_SHIFT, initialise all the corresponding vmemmap `struct hyp_page`s, and attach all of that after phys+used_pages<<PAGE_SHIFT to the free lists (which will presumably combine them as much as it can - is __hyp_attach_page commutative?)
+// PS: precondition: phys is page-aligned (NB not highest-order aligned)
+// PS: precondition: at the C semantics level, the "vmemmap is mapped" precondition is just ownership of the vmemmap array - but at a specific address that makes the arithmetic work
 int hyp_pool_init(struct hyp_pool *pool, u64 pfn, unsigned int nr_pages,
-		  unsigned int reserved_pages)
+                  // JK HACK : the following line is replaced to add 
+                  // used_pages as an argument
+                  // used_pages as an argument
+                  // unsigned int reserved_pages)
+                  unsigned int reserved_pages, unsigned used_pages)
+// int hyp_pool_init(struct hyp_pool *pool, u64 pfn, unsigned int nr_pages,
+// igned int reserved_pages)
 {
 	phys_addr_t phys = hyp_pfn_to_phys(pfn);
 	struct hyp_page *p;

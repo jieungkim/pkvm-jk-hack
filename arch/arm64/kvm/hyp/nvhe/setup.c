@@ -16,6 +16,18 @@
 #include <nvhe/mm.h>
 #include <nvhe/trap_handler.h>
 
+// PS HACK
+#include <../debug-pl011.h>
+#include <../check-debug-pl011.h>
+
+
+// PS HACK
+/*
+#include <nvhe/check-pkvm-pgtables.h>
+#include <asm/kvm_asm.h>
+#include <nvhe/check-pkvm-asm.h>
+*/
+
 struct hyp_pool hpool;
 unsigned long hyp_nr_cpus;
 
@@ -41,10 +53,27 @@ static int create_hyp_debug_uart_mapping(void)
 static int create_hyp_debug_uart_mapping(void) { return 0; }
 #endif
 
-static void *vmemmap_base;
-static void *hyp_pgt_base;
-static void *host_s2_pgt_base;
+
+/* JK HACK : replace them with the following ones
+ static void *vmemmap_base;
+ static void *hyp_pgt_base;
+ static void *host_s2_pgt_base;
++*/
+
+// PS HACK REMOVE static FROM BELOW TO MAKE VISIBLE IN check-pkvm-pgtables.c AND ADD size's
+// JK HACK: It seems we do not need stacks_base and stacks_size any more in our
+// new version. So I removed them. 
+void *vmemmap_base;
+void *hyp_pgt_base;
+void *host_s2_pgt_base;
 static struct kvm_pgtable_mm_ops pkvm_pgtable_mm_ops;
+
+void* early_remainder;
+
+// JK: add the following lines to memorize size 
+unsigned long vmemmap_size;
+unsigned long hyp_pgt_size;
+unsigned long host_s2_pgt_size;
 
 static int divide_memory_pool(void *virt, unsigned long size)
 {
@@ -54,27 +83,51 @@ static int divide_memory_pool(void *virt, unsigned long size)
 
 	hyp_vmemmap_range(__hyp_pa(virt), size, &vstart, &vend);
 	nr_pages = (vend - vstart) >> PAGE_SHIFT;
+        // JK HACK : save the size of vmemmap 
+        vmemmap_size = nr_pages;
+        hyp_putsxn("divide_memory_pool: vmemmap_size - ", vmemmap_size, 64);
+        hyp_putsp("\n");
+      
 	vmemmap_base = hyp_early_alloc_contig(nr_pages);
 	if (!vmemmap_base)
 		return -ENOMEM;
 
 	nr_pages = hyp_s1_pgtable_pages();
-	hyp_pgt_base = hyp_early_alloc_contig(nr_pages);
+        // JK HACK : save the size of hyp_pgt_base
+        hyp_pgt_size = nr_pages; // JK HACK : added
+        hyp_putsxn("divide_memory_pool: hyp_pgt_size - ", hyp_pgt_size, 64);
+        hyp_putsp("\n");
+	
+        hyp_pgt_base = hyp_early_alloc_contig(nr_pages);
 	if (!hyp_pgt_base)
 		return -ENOMEM;
 
 	nr_pages = host_s2_pgtable_pages();
+        // JK HACK : save the size of hyp_pgt_base
+        host_s2_pgt_size = nr_pages; // JK HACK : added
+        hyp_putsxn("divide_memory_pool: host_s2_mem_pgt_size - ", 
+                   host_s2_pgt_size, 64);
+        hyp_putsp("\n");
+
 	host_s2_pgt_base = hyp_early_alloc_contig(nr_pages);
 	if (!host_s2_pgt_base)
 		return -ENOMEM;
+
+        // PS HACK: record start of remainder
+        early_remainder = (void*)hyp_early_alloc_cur();
 
 	return 0;
 }
 
 static int recreate_hyp_mappings(phys_addr_t phys, unsigned long size,
 				 unsigned long *per_cpu_base,
-				 u32 hyp_va_bits)
+                                 u32 hyp_va_bits, unsigned long nr_cpus) // JK HACK: added
+//                              u32 hyp_va_bits) // JK HACK : replaced with the
+//                              above line 
 {
+        // _Bool check;
+
+
 	void *start, *end, *virt = hyp_phys_to_virt(phys);
 	unsigned long pgt_size = hyp_s1_pgtable_pages() << PAGE_SHIFT;
 	int ret, i;
@@ -136,6 +189,18 @@ static int recreate_hyp_mappings(phys_addr_t phys, unsigned long size,
 			return ret;
 	}
 
+        // PS HACK
+        hyp_puts("PS HACK");
+        // dump_pgtable(pkvm_pgtable);
+
+ 
+         // PS HACK
+        // check sample property of the putative mapping
+         //
+        // record_hyp_mappings(phys, size, nr_cpus, per_cpu_base);
+        // check = check_hyp_mappings(pkvm_pgtable.pgd, CHECK_QUIET);
+
+
 	ret = create_hyp_debug_uart_mapping();
 	if (ret)
 		return ret;
@@ -178,11 +243,31 @@ void __noreturn __pkvm_init_finalise(void)
 	unsigned long nr_pages, reserved_pages, pfn;
 	int ret;
 
+        // JK HACK - added the following variable 
+        unsigned long used_pages;
+
+        /*
+        // PS HACK - check the mappings again after the switch
+        struct kvm_nvhe_init_params params_snapshot;
+        hyp_puts("PS HACK AFTER SWITCH");
+         ___kvm_get_sysregs(&params_snapshot);
+        dump_kvm_nvhe_init_params(&params_snapshot);
+        // the check fails at present just because the uart mapping isn't recorded
+        check_hyp_mappings(pkvm_pgtable.pgd, CHECK_NOISY);
+        */
+
+
 	/* Now that the vmemmap is backed, install the full-fledged allocator */
 	pfn = hyp_virt_to_pfn(hyp_pgt_base);
 	nr_pages = hyp_s1_pgtable_pages();
 	reserved_pages = hyp_early_alloc_nr_used_pages();
-	ret = hyp_pool_init(&hpool, pfn, nr_pages, reserved_pages);
+
+        // JK HACK - add the following line to calculate used_pages
+        used_pages = hyp_early_alloc_nr_used_pages();
+	ret = hyp_pool_init(&hpool, pfn, nr_pages, reserved_pages, used_pages);
+	// JK HACK - the following line is replaced with the above line
+        // ret = hyp_pool_init(&hpool, pfn, nr_pages, reserved_pages);
+
 	if (ret)
 		goto out;
 
@@ -227,11 +312,22 @@ int __pkvm_init(phys_addr_t phys, unsigned long size, unsigned long nr_cpus,
 	if (ret)
 		return ret;
 
-	ret = recreate_hyp_mappings(phys, size, per_cpu_base, hyp_va_bits);
+        // JK HACKED : replaced with the following line
+       ret = recreate_hyp_mappings(phys, size, per_cpu_base, hyp_va_bits, (unsigned long)per_cpu_base);
+       // ret = recreate_hyp_mappings(phys, size, per_cpu_base, hyp_va_bits);
+
 	if (ret)
 		return ret;
 
 	update_nvhe_init_params();
+
+       // PS HACK
+       // check sample property of the putative mapping
+       //
+       // _Bool check = check_hyp_mappings(phys, size, nr_cpus, per_cpu_base);
+
+       // PS HACK
+       // hyp_putc('P');hyp_putc('S');hyp_putc('H');hyp_putc('A');hyp_putc('C');hyp_putc('k');hyp_putc('\n');
 
 	/* Jump in the idmap page to switch to the new page-tables */
 	params = this_cpu_ptr(&kvm_init_params);
