@@ -163,6 +163,18 @@ bool check_free_lists(struct hyp_pool *pool)
   return ret;
 }
 
+/* list auxiliary: check whether @node is an element of @head (curiously not already in linux/include/list.h) */
+bool list_contains(struct list_head *node, struct list_head *head)
+{ 
+  struct list_head *pos;
+  list_for_each(pos, head) { //for (pos = head->next; pos != (head); pos = pos->next) 
+    if (pos==node)
+      return true;
+  }
+  return false;
+}
+
+
 bool check_alloc_invariant(struct hyp_pool *pool) {
   bool ret;
   bool interpret_ret = true;
