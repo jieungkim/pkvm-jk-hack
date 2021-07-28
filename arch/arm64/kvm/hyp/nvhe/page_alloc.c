@@ -9,8 +9,190 @@
 
 u64 __hyp_vmemmap;
 
-// JK: The main difference is 
+// JK:
 
+
+// PS: the following are to get debug printing via the uart
+#include <asm/kvm_mmu.h>
+#include <../debug-pl011.h>
+#include <../check-debug-pl011.h>
+
+/* ****************************************************************** */
+/* PS: start encoding some of that into C. There's a lot of choice
+   here, and we have to pay unfortunately much attention to making it
+   feasible to compute; the following is a bit arbitrary, and not
+   terribly nice - it avoids painful computation of the "partitions
+   the pages" part, but is probably more algorithmic than we'd like,
+   esp. in the check_page_groups_and_interpret loop
+   structure. Although for refinement-type proof, we may want the
+   invariants to be as far as possible about the concrete data, rather
+   than about abstractions thereof.  So far the checking code below is
+   computing but not using the abstraction.  Is the abstraction what
+   we want to use for the external spec of this module?  (This seems a
+   bit different to the pgtable case, where some elaboration of the
+   abstraction is probably useful in specs of the recursive functions
+   of the implementation) */
+
+
+// RL: maybe we really want to maintain a forest of binary trees?
+
+/* types of abstraction */
+
+struct page_group {
+  phys_addr_t start;
+  unsigned int order;
+  bool free;
+};
+
+#define MAX_PAGE_GROUPS 0x10000  /* horrible hack */
+
+struct page_groups {
+  struct page_group page_group[MAX_PAGE_GROUPS];
+  u64 count;
+};
+
+struct page_groups page_groups_a;
+
+// USED pages should be continuously assigned
+// Check whether phys is in between the used pages
+bool in_used_pages(phys_addr_t phys, struct hyp_pool *pool)
+{
+  return phys < pool->range_start + PAGE_SIZE*pool->used_pages;
+}
+
+/* pretty-printing */
+
+void put_page_group(struct page_group *pg, struct hyp_pool *pool) {
+  hyp_putsp("Page group info - ");
+  hyp_putsxn("page group start ", pg->start,64);
+  hyp_putsxn("/ end ",pg->start + PAGE_SIZE*(1ul << pg->order),64);
+  hyp_putsxn("/ order ",pg->order,32);
+  hyp_putsp("/ used_pages ");
+  hyp_putbool(in_used_pages(pg->start,pool));
+  hyp_putsp("/ free ");
+  hyp_putbool(pg->free);
+  hyp_putsp("\n");
+}
+
+/**
+ * list_entry - get the struct for this entry
+ * @ptr:        the &struct list_head pointer.
+ * @type:       the type of the struct this is embedded in.
+ * @member:     the name of the list_head within the struct.
+ */
+/* #define list_entry(ptr, type, member) container_of(ptr, type, member) */
+
+void put_free_list(struct list_head *head)
+{
+  struct list_head *pos;
+  list_for_each(pos,head) {
+    struct hyp_page *p = hyp_virt_to_page(pos);
+    hyp_putsxn("", (u64)hyp_page_to_phys(p), 64);
+  }
+}
+
+// Prints all lists (all orders
+void put_free_lists(struct hyp_pool *pool)
+{
+  u64 i;
+  for (i=0; i<pool->max_order; i++) {
+    hyp_putsxn("order",i,64);
+    put_free_list(&pool->free_area[i]);
+    hyp_putc('\n');
+  }
+}
+
+bool check_free_list(struct list_head *head, unsigned int order, struct hyp_pool *pool)
+{
+  bool ret;
+  struct list_head *pos;
+  struct hyp_page *p; 
+  phys_addr_t phys;
+  ret = true;
+
+  // use the macro
+  list_for_each(pos, head) { //for (pos = head->next; pos != (head); pos = pos->next) {
+    p = hyp_virt_to_page(pos);
+    phys = hyp_page_to_phys(p);
+
+    // If phys are already used, or out of range that are marked with pool
+    // range, error.
+    if (phys < pool->range_start + PAGE_SIZE*pool->used_pages ||
+        phys >= pool->range_end) {
+      ret = false;
+      hyp_putsxn("phys",(u64)phys,64);
+      hyp_putc('\n');
+      hyp_putbool(phys < pool->range_start + PAGE_SIZE*pool->used_pages);
+      hyp_putc('\n');
+      hyp_putbool(phys >= pool->range_end);
+      hyp_putc('\n');
+      check_assert_fail("free list entry not in pool unused_page range");
+    }   
+      // hyp_putsxn("phys",(u64)phys,64);
+      // hyp_putc('\n');
+      // hyp_putbool(phys < pool->range_start + PAGE_SIZE*pool->used_pages);
+      // hyp_putc('\n');
+      // hyp_putbool(phys >= pool->range_end);
+      // hyp_putc('\n')
+      //  
+      // maybe this should check p is the address of a hyp_page node member,
+      // not just go straight to hyp_page_to_phys's notion of phys
+      //  
+      // If order is not equal, then return false
+      if (p->order != order) {
+        ret=false;
+        hyp_putsxn("phys",(u64)phys,64);
+        check_assert_fail("free list entry (free page) has wrong order");
+      }   
+    }   
+    return ret;
+}
+
+/* well-formed free lists of pool */
+bool check_free_lists(struct hyp_pool *pool)
+{
+  u64 i;
+  bool ret;
+  ret = true;
+  for (i=0; i<pool->max_order; i++) {
+    hyp_putsxn("start to check free lists with the order of ",(u64)i, 64);
+    hyp_putc('\n');
+    ret = ret &&
+        check_free_list(&pool->free_area[i], i, pool);
+  }
+  return ret;
+}
+
+bool check_alloc_invariant(struct hyp_pool *pool) {
+  bool ret;
+  bool interpret_ret = true;
+  bool check_free_lists_ret = true;
+  ret = true;
+  // Check whether the pool can be interpreted correctly with 
+  // page groups
+  /*
+  interpret_ret = check_page_groups_and_interpret(&page_groups_a, pool);
+ */ 
+  // check whether pages in the pool is free.
+  check_free_lists_ret = check_free_lists(pool);
+  
+  ret = ret && interpret_ret && check_free_lists_ret;
+  // print free lists - This one does not have any interesting invariant
+  // checks, but it prints out free lists on the console
+  put_free_lists(pool);
+  hyp_putsp("Result of check page gruops and interpret: ");
+  hyp_putbool(interpret_ret);
+  hyp_putc('\n');
+  hyp_putsp("Result of check free lists ret: ");
+  hyp_putbool(check_free_lists_ret);
+  hyp_putc('\n');
+  if (!ret)
+    hyp_putsp("check_alloc_invariant failed\n");
+  else
+    hyp_putsp("check_alloc_invariant succeed\n");
+  
+  return ret;
+}
 
 /*
  * Index the hyp_vmemmap to find a potential buddy page, but make no assumption
@@ -33,6 +215,22 @@ u64 __hyp_vmemmap;
  *   __find_buddy_nocheck(pool, page 1, order 0) => page 0
  *   __find_buddy_nocheck(pool, page 2, order 0) => page 3
  */
+
+/* PS: given the address p of a hyp_page in the vmemmap, and an order,
+   return the address of the hyp_page of its buddy (the adjacent page
+   group, either before or after) if its start page is within the pool range,
+   otherwise return NULL */
+/* PS: this is a pure-ish function: no non-local writes */
+/* PS: looking at this range_end check: it only checks the base
+   address of the buddy page group, not the end address. The range
+   that the pool is initialised with is a nice power of two and
+   suitably aligned, which is not the case in general. But the
+   __hyp_attach_page also checks that the order of the buddy is the
+   same as the order of the page its considering, which implies that
+   all of the buddy must have been allocated sometime*/
+/* PS: for the range_start check, should that really be range_start+PAGE_SIZE*used_pages?
+   why is it ok as-is?  Because __hyp_attach_page also checks the buddy is in a free list, 
+   and the used_pages never are */
 static struct hyp_page *__find_buddy_nocheck(struct hyp_pool *pool,
 					     struct hyp_page *p,
 					     unsigned short order)
@@ -93,6 +291,9 @@ static inline struct hyp_page *node_to_page(struct list_head *node)
 	return hyp_virt_to_page(node);
 }
 
+/* PS: given a hyp_page p in the vmemmap, transfer that page group (at the order in that hyp_page) back to the allocator, coalescing buddys as much as possible */
+/* PS: note that the buddy->order != order check ensures that the buddy page-group is the same order as the one we're trying to coalesce with it, and also ensures, if buddy->order==order, that all of the buddy must have been allocated sometime, and so be inside range_start..range_end */
+/* PS: can __hyp_attach_page mistakenly coalesce with the last unused_page?  No, because the used_pages have empty free lists */
 static void __hyp_attach_page(struct hyp_pool *pool,
 			      struct hyp_page *p)
 {
@@ -124,6 +325,9 @@ static void __hyp_attach_page(struct hyp_pool *pool,
 	page_add_to_list(p, &pool->free_area[order]);
 }
 
+// PS: precondition: p is a free (probably non-used_page) page-group of order at least order
+/* Extract a page from the buddy tree, at a specific order */
+// RL: isn't the first check dead code?
 static struct hyp_page *__hyp_extract_page(struct hyp_pool *pool,
 					   struct hyp_page *p,
 					   unsigned short order)
@@ -178,6 +382,13 @@ static void __hyp_put_page(struct hyp_pool *pool, struct hyp_page *p)
  * section to guarantee transient states (e.g. a page with null refcount but
  * not yet attached to a free list) can't be observed by well-behaved readers.
  */
+// PS: hand a reference-count of a page-group back to the allocator
+// PS: ...actually transferring ownership if it's the last reference-count
+// PS: precondition: the refcount for the page at hyp_virt addr is non-zero
+// PS: decrement it
+// PS: if the recount becomes zero, __hyp_attach_page the page group
+// PS: all protected by the pool lock
+// PS: some standard seplogic idiom for ref-counted ownership?
 void hyp_put_page(struct hyp_pool *pool, void *addr)
 {
 	struct hyp_page *p = hyp_virt_to_page(addr);
@@ -187,6 +398,9 @@ void hyp_put_page(struct hyp_pool *pool, void *addr)
 	hyp_spin_unlock(&pool->lock);
 }
 
+// PS: just bump the refcount for the page at hyp_virt addr
+// PS: protected by the pool lock
+// PS: precondition: this page group must be currently handed out (and not in used_pages)
 void hyp_get_page(struct hyp_pool *pool, void *addr)
 {
 	struct hyp_page *p = hyp_virt_to_page(addr);
@@ -196,6 +410,7 @@ void hyp_get_page(struct hyp_pool *pool, void *addr)
 	hyp_spin_unlock(&pool->lock);
 }
 
+// PS: ask for a page-group at some order, either zero'd or not depending on gfp_t mask; return the address of the vmemmap hyp_page (cast to void*) or NULL if it failed.
 void *hyp_alloc_pages(struct hyp_pool *pool, unsigned short order)
 {
 	unsigned short i = order;
@@ -218,6 +433,11 @@ void *hyp_alloc_pages(struct hyp_pool *pool, unsigned short order)
 	hyp_set_page_refcounted(p);
 	hyp_spin_unlock(&pool->lock);
 
+       // PS: add check.  later we may need to make these sample, not be re-run on every call
+       hyp_putsxn("__hyp_alloc_pages order",order,32);
+       hyp_putsxn(" returned p",(u64)p,64);
+       check_alloc_invariant(pool);
+
 	return hyp_page_to_virt(p);
 }
 
@@ -237,6 +457,22 @@ int hyp_pool_init(struct hyp_pool *pool, u64 pfn, unsigned int nr_pages,
 	struct hyp_page *p;
 	int i;
 
+       // PS: add:
+       hyp_putsxn("hyp_pool_init phys",phys,64);
+       hyp_putsp("\n");
+       hyp_putsxn("phys - end",phys + (nr_pages << PAGE_SHIFT),64);
+       hyp_putsp("\n");
+       hyp_putsxn("nr_pages",nr_pages,32);
+       hyp_putsp("\n");
+       hyp_putsxn("used_pages",used_pages,32);
+       hyp_putsp("\n");
+       hyp_putsxn("reserved_pages",reserved_pages,32);
+       hyp_putsp("\n");
+       hyp_putsxn("PAGE_SHIFT", PAGE_SHIFT, 32); 
+       hyp_putsp("\n");
+       hyp_putsxn("get_order result", get_order(nr_pages << PAGE_SHIFT), 32);      
+       hyp_putsp("\n");
+
 	hyp_spin_lock_init(&pool->lock);
 	pool->max_order = min(MAX_ORDER, get_order(nr_pages << PAGE_SHIFT));
 	for (i = 0; i < pool->max_order; i++)
@@ -244,8 +480,15 @@ int hyp_pool_init(struct hyp_pool *pool, u64 pfn, unsigned int nr_pages,
 	pool->range_start = phys;
 	pool->range_end = phys + (nr_pages << PAGE_SHIFT);
 
-	/* Init the vmemmap portion */
+       // PS: add this to help state the invariant:
+       pool->used_pages = used_pages;
+
+       /* Init the vmemmap portion */
+       // JK: Get the address 
 	p = hyp_phys_to_page(phys);
+       // PS: zero all the `struct hyp_page`s in the vmemmap that correspond to the pages given to the allocator
+        // PS: and for each of them, record that it belongs to this pool, and initialise its `struct list_head node` to an empty list (pointing to itself)
+
 	for (i = 0; i < nr_pages; i++) {
 		p[i].order = 0;
 		hyp_set_page_refcounted(&p[i]);
@@ -254,6 +497,9 @@ int hyp_pool_init(struct hyp_pool *pool, u64 pfn, unsigned int nr_pages,
 	/* Attach the unused pages to the buddy tree */
 	for (i = reserved_pages; i < nr_pages; i++)
 		__hyp_put_page(pool, &p[i]);
+
+        // PS : add invariant check
+        check_alloc_invariant(pool);
 
 	return 0;
 }
