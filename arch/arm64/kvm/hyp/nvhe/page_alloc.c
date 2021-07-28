@@ -174,6 +174,171 @@ bool list_contains(struct list_head *node, struct list_head *head)
   return false;
 }
 
+/* add page_group to abstraction */
+void add_page_group(struct page_groups *pgs, phys_addr_t phys, unsigned int order, bool free, struct hyp_pool *pool)
+{
+  struct page_group *pg;
+
+  // count will first start from 0
+  pg = &pgs->page_group[pgs->count];
+  if (pgs->count >= MAX_PAGE_GROUPS) {
+    check_assert_fail("overran MAX_PAGE_GROUPS"); 
+    return; 
+  }
+
+  pg->start = phys;
+  pg->order = order;
+  pg->free = free;
+
+  // print out the page group that is added at this moment
+  put_page_group(pg, pool);
+  // add page groups
+  pgs->count++;
+}
+
+
+static struct hyp_page *find_free_buddy(struct hyp_pool *pool,
+                                             struct hyp_page *p, 
+                                             unsigned short order)
+{
+
+        phys_addr_t addr = hyp_page_to_phys(p);
+        struct hyp_page *buddy = hyp_phys_to_page(addr);
+
+        addr ^= (PAGE_SIZE << order);
+
+        /*
+         * Don't return a page outside the pool range -- it belongs to
+         * something else and may not be mapped in hyp_vmemmap.
+         */
+        if (addr < pool->range_start || addr >= pool->range_end)
+                return NULL;
+
+        if (!buddy || buddy->order != order || buddy->refcount)
+                return NULL;
+        return buddy;
+}
+
+
+/* well-formed page_group start page */
+bool check_page_group_start(phys_addr_t phys, struct hyp_page *p, struct hyp_pool *pool)
+{
+  bool ret;
+  ret = true;
+
+  // order has to be specified
+  if (p->order == HYP_NO_ORDER) {
+    ret=false;
+    hyp_putsxn("phys",(u64)phys,64);
+    check_assert_fail("found HYP_NO_ORDER at next start page");
+  }
+
+  // order should be less than max_order
+  if (p->order >= pool->max_order) {
+    ret=false;
+    hyp_putsxn("phys",(u64)phys,64);
+    check_assert_fail("found over-large order in start page");
+  }
+
+  // page is unaligned
+  if ((phys & GENMASK(p->order + PAGE_SHIFT - 1, 0)) != 0) {
+    ret=false;
+    hyp_putsxn("phys",(u64)phys,64);
+    check_assert_fail("found unaligned page group in start page");
+  }
+
+  // page should be inside the end
+  if (phys + PAGE_SIZE*(1ul << p->order) > pool->range_end) {
+    ret=false;
+    hyp_putsxn("phys",(u64)phys,64);
+    check_assert_fail("body runs over range_end");
+  }
+
+  // Page should not be used at all
+  if ((p->refcount != 0) || in_used_pages(phys,pool)) {
+    ret=false;
+    hyp_putsxn("phys",(u64)phys,64);
+    check_assert_fail("found non-empty list in refcount!=0 or used_pages start page");
+  }
+
+  if (find_free_buddy(pool, p, p->order) != NULL) {
+    ret=false;
+    hyp_putsxn("phys",(u64)phys,64);
+    check_assert_fail("found free buddy");
+  }
+  return ret;
+}
+
+/* well-formed page_group body page */
+bool check_page_group_body(struct hyp_page *pbody, struct hyp_pool *pool)
+{
+  bool ret;
+  ret= true;
+
+  // the order has not to be specified
+  if (pbody->order != HYP_NO_ORDER) {
+    ret=false; check_assert_fail("found non-HYP_NO_ORDER in body");
+  }
+  // refcount needs to be zero - this page should not be allocated via
+  // anyone
+  if (pbody->refcount !=0) {
+    ret=false; check_assert_fail("found non-zero refcount in body");
+  }
+  return ret;
+}
+
+
+
+/* well-formed page_group */
+bool check_page_group(phys_addr_t phys, struct hyp_page *p, struct hyp_pool *pool)
+{ 
+  bool ret;
+  struct hyp_page *pbody;
+  
+  // check page group start with 
+  // phys: each page's start address
+  // p: translate page address to hyp_page structure 
+  // pool: pool (to check the existence?
+  ret = check_page_group_start(phys, p, pool);
+  
+  // For each address in the hyp_page, check whether the
+  // page is in the pool
+  for (pbody=p+1; pbody < p+(1ul << (p->order)); pbody++) {
+    ret = ret && check_page_group_body(pbody, pool);
+  }
+  return ret;
+}
+
+/* check all page groups and compute abstraction */
+bool check_page_groups_and_interpret(struct page_groups* pgs, struct hyp_pool *pool)
+{
+  phys_addr_t phys;
+  struct hyp_page *p;
+
+  bool temp_ret;
+  bool ret;
+  ret = true;
+  temp_ret = true;
+  pgs->count = 0;
+  // from start to the end,
+  phys = pool->range_start;
+  while (phys < pool->range_end) {
+    p = hyp_phys_to_page(phys);
+    // check each page 
+    temp_ret = check_page_group(phys, p, pool);
+    ret = ret && temp_ret;
+    // add page group  
+    // pgs: page groups - global variable 
+    // phys: physical address of the page that will be added at this
+    // moment
+    // p->refcount == 0 : free or not 
+    // pool: to print out values (not for assign values in
+    // page_groups
+    add_page_group(pgs, phys, p->order, (p->refcount == 0), pool);
+    phys += PAGE_SIZE*(1ul << p->order);
+  }
+  return ret;
+}
 
 bool check_alloc_invariant(struct hyp_pool *pool) {
   bool ret;
@@ -182,9 +347,7 @@ bool check_alloc_invariant(struct hyp_pool *pool) {
   ret = true;
   // Check whether the pool can be interpreted correctly with 
   // page groups
-  /*
   interpret_ret = check_page_groups_and_interpret(&page_groups_a, pool);
- */ 
   // check whether pages in the pool is free.
   check_free_lists_ret = check_free_lists(pool);
   
