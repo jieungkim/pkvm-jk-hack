@@ -38,14 +38,20 @@ u64 __hyp_vmemmap;
 
 /* types of abstraction */
 
+// Abstraction of each page 
+// start - start address of this page
+// order - order of this page (int between 0 and (max_order - 1)
+// free - to check wether it is freed page or not
 struct page_group {
   phys_addr_t start;
   unsigned int order;
   bool free;
 };
 
+// maximum number of pages in the page group
 #define MAX_PAGE_GROUPS 0x10000  /* horrible hack */
 
+// count is a fresh count for the page group
 struct page_groups {
   struct page_group page_group[MAX_PAGE_GROUPS];
   u64 count;
@@ -53,18 +59,20 @@ struct page_groups {
 
 struct page_groups page_groups_a;
 
-
+// distinguish whether we are during the initialization or not 
 static bool during_initialization;
 
 // USED pages should be continuously assigned
 // Check whether phys is in between the used pages
+// It checks whether [phys] is one of used pages in 
+// the page pool [pool]
 bool in_used_pages(phys_addr_t phys, struct hyp_pool *pool)
 {
   return phys < pool->range_start + PAGE_SIZE*pool->used_pages;
 }
 
 /* pretty-printing */
-
+// it prints out hte page group with some checks with a given page pool [pool]
 void put_page_group(struct page_group *pg, struct hyp_pool *pool) {
   hyp_putsp("Page group info - ");
   hyp_putsxn("page group start ", pg->start,64);
@@ -84,17 +92,18 @@ void put_page_group(struct page_group *pg, struct hyp_pool *pool) {
  * @member:     the name of the list_head within the struct.
  */
 /* #define list_entry(ptr, type, member) container_of(ptr, type, member) */
-
 void put_free_list(struct list_head *head)
 {
   struct list_head *pos;
   list_for_each(pos,head) {
+    // Convert the list node into the hyp_page value
     struct hyp_page *p = hyp_virt_to_page(pos);
+    // Print out the page address in the free list
     hyp_putsxn("", (u64)hyp_page_to_phys(p), 64);
   }
 }
 
-// Prints all lists (all orders
+// Prints all lists (all orders in the pool)
 void put_free_lists(struct hyp_pool *pool)
 {
   u64 i;
@@ -105,17 +114,22 @@ void put_free_lists(struct hyp_pool *pool)
   }
 }
 
-bool check_free_list(struct list_head *head, unsigned int order, struct hyp_pool *pool)
+// The top level function that checks all free lists in the pool 
+bool check_free_list(struct list_head *head, unsigned int order,
+                     struct hyp_pool *pool)
 {
   bool ret;
   struct list_head *pos;
-  struct hyp_page *p; 
+  struct hyp_page *p ;
   phys_addr_t phys;
   ret = true;
 
   // use the macro
-  list_for_each(pos, head) { //for (pos = head->next; pos != (head); pos = pos->next) {
+  list_for_each(pos, head) {
+    // for (pos = head->next; pos != (head); pos = pos->next) {
+    // Convert the node into the hyp_page value
     p = hyp_virt_to_page(pos);
+    // Get the address of the hyp page
     phys = hyp_page_to_phys(p);
 
     // If phys are already used, or out of range that are marked with pool
@@ -123,6 +137,7 @@ bool check_free_list(struct list_head *head, unsigned int order, struct hyp_pool
     if (phys < pool->range_start + PAGE_SIZE*pool->used_pages ||
         phys >= pool->range_end) {
       ret = false;
+      // Print out the current status to check the source of the error
       hyp_putsxn("phys",(u64)phys,64);
       hyp_putc('\n');
       hyp_putbool(phys < pool->range_start + PAGE_SIZE*pool->used_pages);
@@ -130,14 +145,7 @@ bool check_free_list(struct list_head *head, unsigned int order, struct hyp_pool
       hyp_putbool(phys >= pool->range_end);
       hyp_putc('\n');
       check_assert_fail("free list entry not in pool unused_page range");
-    }   
-      // hyp_putsxn("phys",(u64)phys,64);
-      // hyp_putc('\n');
-      // hyp_putbool(phys < pool->range_start + PAGE_SIZE*pool->used_pages);
-      // hyp_putc('\n');
-      // hyp_putbool(phys >= pool->range_end);
-      // hyp_putc('\n')
-      //  
+    }
       // maybe this should check p is the address of a hyp_page node member,
       // not just go straight to hyp_page_to_phys's notion of phys
       //  
@@ -152,6 +160,7 @@ bool check_free_list(struct list_head *head, unsigned int order, struct hyp_pool
 }
 
 /* well-formed free lists of pool */
+// Check all free lists. 
 bool check_free_lists(struct hyp_pool *pool)
 {
   u64 i;
@@ -166,40 +175,49 @@ bool check_free_lists(struct hyp_pool *pool)
   return ret;
 }
 
+
 /* list auxiliary: check whether @node is an element of @head (curiously not already in linux/include/list.h) */
-bool list_contains(struct list_head *node, struct list_head *head)
-{ 
+bool list_contains(struct hyp_page *p, struct list_head *head)
+{
   struct list_head *pos;
-  list_for_each(pos, head) { //for (pos = head->next; pos != (head); pos = pos->next) 
-    if (pos==node)
+  list_for_each(pos, head) { 
+    // for (pos = head->next; pos != (head); pos = pos->next) 
+    struct hyp_page *head_p = hyp_virt_to_page(pos);
+    if (p == head_p)
       return true;
   }
   return false;
 }
 
 /* add page_group to abstraction */
-void add_page_group(struct page_groups *pgs, phys_addr_t phys, unsigned int order, bool free, struct hyp_pool *pool)
+void add_page_group(struct page_groups *pgs, phys_addr_t phys, 
+                    unsigned int order, bool free, struct hyp_pool *pool)
 {
   struct page_group *pg;
 
-  // count will first start from 0
-  pg = &pgs->page_group[pgs->count];
+  // Check the current count. If the count exceed the limit, we can
+  // simply increase the size of page_group in page groups
   if (pgs->count >= MAX_PAGE_GROUPS) {
-    check_assert_fail("overran MAX_PAGE_GROUPS"); 
-    return; 
+    check_assert_fail("overran MAX_PAGE_GROUPS");
+    return;
   }
 
+  // count will first start from 0
+  pg = &pgs->page_group[pgs->count];
+
+  // Add information
   pg->start = phys;
   pg->order = order;
   pg->free = free;
 
   // print out the page group that is added at this moment
   put_page_group(pg, pool);
-  // add page groups
+  // Increase the counter
   pgs->count++;
 }
 
-
+// Copied and pasted the following definition from 
+// find_free_budy_nocheck
 static struct hyp_page *find_free_buddy(struct hyp_pool *pool,
                                              struct hyp_page *p, 
                                              unsigned short order)
@@ -224,7 +242,9 @@ static struct hyp_page *find_free_buddy(struct hyp_pool *pool,
 
 
 /* well-formed page_group start page */
-bool check_page_group_start(phys_addr_t phys, struct hyp_page *p, struct hyp_pool *pool)
+bool check_page_group_start(phys_addr_t phys, 
+                            struct hyp_page *p, 
+                            struct hyp_pool *pool)
 {
   bool ret;
   ret = true;
@@ -257,21 +277,31 @@ bool check_page_group_start(phys_addr_t phys, struct hyp_page *p, struct hyp_poo
     check_assert_fail("body runs over range_end");
   }
 
-  // Page should not be used at all
+  if ((p->refcount != 0) || in_used_pages(phys,pool)) {
+    return ret;
+  }
+
+  if (!list_contains(p, &pool->free_area[p->order])) {
+    ret=false;
+    hyp_putsxn("phys",(u64)phys,64);
+    check_assert_fail("refcount==0 non-used_pages start page not in free  \
+                      list of its order"); 
+  }
+
+  /* The following will be broken in some cases
+   * (When we alloc some pages). However, it will be valid 
+   * during the initialization, so I added this check for the
+   * initialization */
   if (!during_initialization) {
     return ret;
   }
 
-  if ((p->refcount != 0) || in_used_pages(phys,pool)) {
-    ret=false;
-    hyp_putsxn("phys",(u64)phys,64);
-    check_assert_fail("found non-empty list in refcount!=0 or used_pages start page");
+  if (find_free_buddy(pool, p, p->order) != NULL) { 
+    ret=false; 
+    hyp_putsxn("phys",(u64)phys,64); 
+    check_assert_fail("found free buddy"); 
   }
-  if (find_free_buddy(pool, p, p->order) != NULL) {
-    ret=false;
-    hyp_putsxn("phys",(u64)phys,64);
-    check_assert_fail("found free buddy");
-  }
+
   return ret;
 }
 
@@ -281,7 +311,7 @@ bool check_page_group_body(struct hyp_page *pbody, struct hyp_pool *pool)
   bool ret;
   ret= true;
 
-  // the order has not to be specified
+  // the order is not specified
   if (pbody->order != HYP_NO_ORDER) {
     ret=false; check_assert_fail("found non-HYP_NO_ORDER in body");
   }
@@ -304,7 +334,7 @@ bool check_page_group(phys_addr_t phys, struct hyp_page *p, struct hyp_pool *poo
   // check page group start with 
   // phys: each page's start address
   // p: translate page address to hyp_page structure 
-  // pool: pool (to check the existence?
+  // pool: pool (to check the existence of the page inside the pool).
   ret = check_page_group_start(phys, p, pool);
   
   // For each address in the hyp_page, check whether the
@@ -316,7 +346,8 @@ bool check_page_group(phys_addr_t phys, struct hyp_page *p, struct hyp_pool *poo
 }
 
 /* check all page groups and compute abstraction */
-bool check_page_groups_and_interpret(struct page_groups* pgs, struct hyp_pool *pool)
+bool check_page_groups_and_interpret(struct page_groups* pgs, 
+                                     struct hyp_pool *pool)
 {
   phys_addr_t phys;
   struct hyp_page *p;
