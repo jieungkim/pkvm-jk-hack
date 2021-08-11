@@ -1504,12 +1504,14 @@ static void hyp_install_host_vector(void)
 
 static void cpu_init_hyp_mode(void)
 {
+  kvm_info("PS HACK: cpu_init_hyp_mode 1 - install host vector");
 	hyp_install_host_vector();
 
 	/*
 	 * Disabling SSBD on a non-VHE system requires us to enable SSBS
 	 * at EL2.
 	 */
+  kvm_info("PS HACK: cpu_init_hyp_mode 2 - call hyp nvhe");
 	if (this_cpu_has_cap(ARM64_SSBS) &&
 	    arm64_get_spectre_v4_state() == SPECTRE_VULNERABLE) {
 		kvm_call_hyp_nvhe(__kvm_enable_ssbs);
@@ -1778,12 +1780,17 @@ static int do_pkvm_init(u32 hyp_va_bits)
 
 static int kvm_hyp_init_protection(u32 hyp_va_bits)
 {
+
+
 	void *addr = phys_to_virt(hyp_mem_base);
 	int ret;
+
+  kvm_info("PS HACK: kvm_hyp_init_protection 1");
 
 	kvm_nvhe_sym(id_aa64mmfr0_el1_sys_val) = read_sanitised_ftr_reg(SYS_ID_AA64MMFR0_EL1);
 	kvm_nvhe_sym(id_aa64mmfr1_el1_sys_val) = read_sanitised_ftr_reg(SYS_ID_AA64MMFR1_EL1);
 
+        kvm_info("PS HACK: kvm_hyp_enable_protection hyp_mem_base=%px addr=%px",(void*)hyp_mem_base,(void*)addr);
 	ret = create_hyp_mappings(addr, addr + hyp_mem_size, PAGE_HYP);
 	if (ret)
 		return ret;

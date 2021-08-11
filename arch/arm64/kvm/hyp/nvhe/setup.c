@@ -25,8 +25,9 @@
 /*
 #include <nvhe/check-pkvm-pgtables.h>
 #include <asm/kvm_asm.h>
-#include <nvhe/check-pkvm-asm.h>
 */
+#include <nvhe/check-pkvm-asm.h>
+
 
 struct hyp_pool hpool;
 unsigned long hyp_nr_cpus;
@@ -246,13 +247,15 @@ void __noreturn __pkvm_init_finalise(void)
         // JK HACK - added the following variable 
         unsigned long used_pages;
 
-        /*
+        
         // PS HACK - check the mappings again after the switch
         struct kvm_nvhe_init_params params_snapshot;
         hyp_puts("PS HACK AFTER SWITCH");
          ___kvm_get_sysregs(&params_snapshot);
+        /*
         dump_kvm_nvhe_init_params(&params_snapshot);
-        // the check fails at present just because the uart mapping isn't recorded
+        // the check fails at present just because the 
+        // uart mapping isn't recorded
         check_hyp_mappings(pkvm_pgtable.pgd, CHECK_NOISY);
         */
 
