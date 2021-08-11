@@ -26,6 +26,7 @@
 #include <nvhe/check-pkvm-pgtables.h>
 #include <asm/kvm_asm.h>
 */
+#include <nvhe/check-pkvm-pgtables.h>
 #include <nvhe/check-pkvm-asm.h>
 
 
@@ -252,12 +253,10 @@ void __noreturn __pkvm_init_finalise(void)
         struct kvm_nvhe_init_params params_snapshot;
         hyp_puts("PS HACK AFTER SWITCH");
          ___kvm_get_sysregs(&params_snapshot);
-        /*
         dump_kvm_nvhe_init_params(&params_snapshot);
         // the check fails at present just because the 
         // uart mapping isn't recorded
         check_hyp_mappings(pkvm_pgtable.pgd, CHECK_NOISY);
-        */
 
 
 	/* Now that the vmemmap is backed, install the full-fledged allocator */

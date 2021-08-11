@@ -16,8 +16,7 @@ obj-y := timer-sr.o sysreg-sr.o debug-sr.o switch.o tlb.o hyp-init.o host.o \
 	 hyp-main.o hyp-smp.o psci-relay.o early_alloc.o stub.o page_alloc.o \
 	 cache.o setup.o mm.o mem_protect.o
 # PS HACK:
-# obj-y += check-pkvm-pgtables.o
-# obj-y += check-pkvm-full-pgtables.o
+obj-y += check-pkvm-pgtables.o
 obj-y += check-pkvm-asm.o
 obj-y += sort_hack.o
 #
