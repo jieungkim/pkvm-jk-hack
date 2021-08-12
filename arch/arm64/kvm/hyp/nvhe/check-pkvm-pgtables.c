@@ -75,7 +75,16 @@ void dump_pgtable(struct kvm_pgtable pg) {
 
 }
 
-void dump_kvm_nvhe_init_params(struct kvm_nvhe_init_params *params) {
-
+/* **************************************** */
+/* print key system register values */
+void dump_kvm_nvhe_init_params(struct kvm_nvhe_init_params *params)
+{
+        hyp_putsxn("mair_el2    ", params->mair_el2     , 64); hyp_putc('\n');
+        hyp_putsxn("tcr_el2     ", params->tcr_el2      , 64); hyp_putc('\n');
+        hyp_putsxn("tpidr_el2   ", params->tpidr_el2    , 64); hyp_putc('\n');
+        hyp_putsxn("stack_hyp_va", params->stack_hyp_va , 64); hyp_putc('\n');
+        hyp_putsxn("pgd_pa      ", (unsigned long)params->pgd_pa       , 64); hyp_putc('\n');
+        hyp_putsxn("hcr_el2     ", params->hcr_el2      , 64); hyp_putc('\n');
+        hyp_putsxn("vttbr       ", params->vttbr        , 64); hyp_putc('\n');
+        hyp_putsxn("vtcr        ", params->vtcr         , 64); hyp_putc('\n');
 }
-
