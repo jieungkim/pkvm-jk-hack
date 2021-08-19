@@ -65,6 +65,7 @@ static int create_hyp_debug_uart_mapping(void) { return 0; }
 // PS HACK REMOVE static FROM BELOW TO MAKE VISIBLE IN check-pkvm-pgtables.c AND ADD size's
 // JK HACK: It seems we do not need stacks_base and stacks_size any more in our
 // new version. So I removed them. 
+void *stacks_base;
 void *vmemmap_base;
 void *hyp_pgt_base;
 void *host_s2_pgt_base;
@@ -73,6 +74,7 @@ static struct kvm_pgtable_mm_ops pkvm_pgtable_mm_ops;
 void* early_remainder;
 
 // JK: add the following lines to memorize size 
+unsigned long stacks_size;
 unsigned long vmemmap_size;
 unsigned long hyp_pgt_size;
 unsigned long host_s2_pgt_size;
@@ -82,6 +84,12 @@ static int divide_memory_pool(void *virt, unsigned long size)
 	unsigned long vstart, vend, nr_pages;
 
 	hyp_early_alloc_init(virt, size);
+
+        // JK : added, but we need to check it later
+        stacks_size = hyp_nr_cpus;
+        stacks_base = hyp_early_alloc_contig(hyp_nr_cpus);
+        if (!stacks_base)
+                return -ENOMEM;
 
 	hyp_vmemmap_range(__hyp_pa(virt), size, &vstart, &vend);
 	nr_pages = (vend - vstart) >> PAGE_SHIFT;
@@ -127,7 +135,7 @@ static int recreate_hyp_mappings(phys_addr_t phys, unsigned long size,
 //                              u32 hyp_va_bits) // JK HACK : replaced with the
 //                              above line 
 {
-        // _Bool check;
+        _Bool check;
 
 
 	void *start, *end, *virt = hyp_phys_to_virt(phys);
@@ -193,14 +201,13 @@ static int recreate_hyp_mappings(phys_addr_t phys, unsigned long size,
 
         // PS HACK
         hyp_puts("PS HACK");
-        // dump_pgtable(pkvm_pgtable);
+        dump_pgtable(pkvm_pgtable);
 
- 
-         // PS HACK
+        // PS HACK
         // check sample property of the putative mapping
-         //
-        // record_hyp_mappings(phys, size, nr_cpus, per_cpu_base);
-        // check = check_hyp_mappings(pkvm_pgtable.pgd, CHECK_QUIET);
+        record_hyp_mappings(phys, size, nr_cpus, per_cpu_base);
+        check = check_hyp_mappings(pkvm_pgtable.pgd, CHECK_QUIET);
+
 
 
 	ret = create_hyp_debug_uart_mapping();
